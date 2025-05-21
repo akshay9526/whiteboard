@@ -12,7 +12,7 @@ class DrawingPadApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: AppConstants.Whiteboard,
-      home: const DrawingPad(),
+      home: DrawingPad(),
       debugShowCheckedModeBanner: false,
     );
   }

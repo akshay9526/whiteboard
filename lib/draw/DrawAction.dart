@@ -1,4 +1,3 @@
-// Represents a single drawing action (line, circle, text, etc.)
 import 'dart:ui';
 
 import '../utils/Tools.dart';

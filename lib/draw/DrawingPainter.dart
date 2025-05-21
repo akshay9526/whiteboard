@@ -22,23 +22,39 @@ class DrawingPainter extends CustomPainter {
     canvas.scale(scale);
 
     canvas.drawRect(Offset.zero & size, Paint()..color = Colors.white);
+    final paintLayer = Paint();
+    canvas.saveLayer(Offset.zero & size, paintLayer);
+
+    canvas.drawRect(Offset.zero & size, Paint()..color = Colors.white);
     if (backgroundImage != null) {
       paintImage(
-          canvas: canvas, image: backgroundImage!, rect: Offset.zero & size);
+        canvas: canvas,
+        image: backgroundImage!,
+        rect: Offset.zero & size,
+        fit: BoxFit.cover,
+      );
     }
 
     for (var action in actions) {
       final isEraser = action.tool == Tool.eraser;
       final paint = Paint()
-        ..color = isEraser
-            ? Colors.transparent
-            : action.color // Use transparent color for eraser
+        ..color = isEraser ? Colors.transparent : action.color
         ..strokeWidth = action.strokeWidth
         ..style = action.isFilled ? PaintingStyle.fill : PaintingStyle.stroke
         ..blendMode = isEraser ? BlendMode.clear : BlendMode.srcOver;
 
       switch (action.tool) {
         case Tool.pencil:
+          final path = Path()
+            ..moveTo(action.pathPoints[0].dx, action.pathPoints[0].dy);
+          for (int i = 1; i < action.pathPoints.length - 1; i++) {
+            final midPoint =
+                (action.pathPoints[i] + action.pathPoints[i + 1]) / 2;
+            path.quadraticBezierTo(action.pathPoints[i].dx,
+                action.pathPoints[i].dy, midPoint.dx, midPoint.dy);
+          }
+          canvas.drawPath(path, paint);
+          break;
         case Tool.eraser:
           for (int i = 0; i < action.pathPoints.length - 1; i++) {
             canvas.drawLine(
@@ -80,7 +96,7 @@ class DrawingPainter extends CustomPainter {
     final radius = (action.pathPoints[0] - action.pathPoints[1]).distance / 2;
     final path = Path();
     for (int i = 0; i < sides; i++) {
-      final angle = (2 * pi / sides) * i;
+      final angle = (2 * pi / sides) * i - pi / 2;
       final x = center.dx + radius * cos(angle);
       final y = center.dy + radius * sin(angle);
       final point = Offset(x, y);
@@ -95,7 +111,9 @@ class DrawingPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) {
-    return true;
+  bool shouldRepaint(DrawingPainter oldDelegate) {
+    return oldDelegate.actions != actions ||
+        oldDelegate.scale != scale ||
+        oldDelegate.backgroundImage != backgroundImage;
   }
 }

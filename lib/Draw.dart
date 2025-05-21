@@ -62,6 +62,9 @@ class _DrawingPadState extends State<DrawingPad> {
 
   bool hasPermision = false;
 
+  List<DrawAction> actions = [];
+  List<Offset> _currentPath = [];
+
   @override
   void initState() {
     super.initState();
@@ -413,8 +416,14 @@ class _DrawingPadState extends State<DrawingPad> {
     });
   }
 
+  Offset _offset = Offset.zero;
+  DrawAction? selectedPolygon;
+
   @override
   Widget build(BuildContext context) {
+    double _scale = 1.0;
+    Offset _offset = Offset.zero;
+
     SystemChrome.setPreferredOrientations(
         [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
 
