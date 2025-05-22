@@ -12,8 +12,6 @@ class TextPainterCanvas extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = Colors.black;
-
     for (final textObject in textObjects) {
       final textSpan = TextSpan(
         text: textObject.text,

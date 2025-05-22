@@ -62,6 +62,14 @@ class _DrawingPadState extends State<DrawingPad> {
 
   bool hasPermision = false;
 
+  List<DrawAction> actions = [];
+  List<Offset> _currentPath = [];
+
+  double _currentRotation = 0.0;
+
+  bool _isDraggingShape = false;
+  Offset _dragStartOffset = Offset.zero;
+
   @override
   void initState() {
     super.initState();
@@ -82,10 +90,113 @@ class _DrawingPadState extends State<DrawingPad> {
           _strokeWidth,
           _polygonSides,
           _isFilled,
+          '',
+          0.0,
         ));
         _redoStack.clear(); // Clear redo stack on a new action
       }
     });
+  }
+
+  bool _isPointInAction(Offset point, DrawAction action) {
+    switch (action.tool) {
+      case Tool.pencil:
+      case Tool.eraser:
+        for (int i = 0; i < action.pathPoints.length - 1; i++) {
+          if (_isPointNearLine(point, action.pathPoints[i],
+              action.pathPoints[i + 1], action.strokeWidth)) {
+            return true;
+          }
+        }
+        return false;
+      case Tool.line:
+        return _isPointNearLine(point, action.pathPoints[0],
+            action.pathPoints[1], action.strokeWidth);
+      case Tool.rectangle:
+        final rect =
+            Rect.fromPoints(action.pathPoints[0], action.pathPoints[1]);
+        return rect.contains(point) ||
+            _isPointNearRectBorder(point, rect, action.strokeWidth);
+      case Tool.circle:
+        final center = (action.pathPoints[0] + action.pathPoints[1]) / 2;
+        final radius =
+            (action.pathPoints[0] - action.pathPoints[1]).distance / 2;
+        final distance = (point - center).distance;
+        return action.isFilled
+            ? (distance <= radius)
+            : (distance - radius).abs() <= action.strokeWidth / 2;
+      case Tool.polygon:
+        return _isPointInPolygon(point, action);
+      case Tool.text:
+        return _isPointInTextBounds(point, action);
+      case Tool.select:
+        return false;
+    }
+  }
+
+  void _onPanStart(DragStartDetails details) {
+    final position = details.localPosition;
+
+    // Check if tapped on a shape to select
+    for (int i = _actions.length - 1; i >= 0; i--) {
+      if (_isPointInAction(position, _actions[i])) {
+        setState(() {
+          _selectedActionIndex = i;
+          _isDraggingShape = true;
+          _dragStartOffset = position;
+          _currentRotation = _actions[i].rotation; // sync rotation slider
+        });
+        return;
+      }
+    }
+
+    // Not on shape: start drawing
+    _start = position;
+    _end = position;
+
+    // For drawing new shape
+    if (_currentTool == Tool.pencil || _currentTool == Tool.eraser) {
+      _actions.add(DrawAction(
+        _currentTool,
+        [position],
+        _currentTool == Tool.eraser ? Colors.transparent : _currentColor,
+        _strokeWidth,
+        _polygonSides,
+        _isFilled,
+        '',
+        0.0,
+      ));
+      _redoStack.clear();
+    }
+  }
+
+  void _onPanUpdate(DragUpdateDetails details) {
+    final position = details.localPosition;
+
+    if (_isDraggingShape && _selectedActionIndex != null) {
+      // Move selected shape
+      final delta = position - _dragStartOffset;
+      setState(() {
+        final action = _actions[_selectedActionIndex!];
+        for (int i = 0; i < action.pathPoints.length; i++) {
+          action.pathPoints[i] += delta;
+        }
+        _dragStartOffset = position;
+      });
+    } else {
+      // Drawing
+      _updateDraw(position);
+    }
+  }
+
+  void _onPanEnd(DragEndDetails details) {
+    if (_currentTool != Tool.select) {
+      _endDraw();
+    } else if (_isDraggingShape) {
+      setState(() {
+        _isDraggingShape = false;
+      });
+    }
   }
 
   // Updates the current drawing action
@@ -112,6 +223,8 @@ class _DrawingPadState extends State<DrawingPad> {
         _strokeWidth,
         _currentTool == Tool.polygon ? _polygonSides : 0,
         _isFilled,
+        '',
+        0.0,
       ));
       _redoStack.clear();
     }
@@ -413,6 +526,13 @@ class _DrawingPadState extends State<DrawingPad> {
     });
   }
 
+  Offset _offset = Offset.zero;
+  DrawAction? selectedPolygon;
+
+  bool _isTextDragging = false;
+  int? _draggedTextIndex;
+  Offset _initialDragOffset = Offset.zero;
+
   @override
   Widget build(BuildContext context) {
     SystemChrome.setPreferredOrientations(
@@ -444,22 +564,112 @@ class _DrawingPadState extends State<DrawingPad> {
           Expanded(
             child: GestureDetector(
               onPanStart: (details) {
+                _onPanStart;
+
                 if (_currentTool == Tool.select) {
                   _handleSelection(details.localPosition);
                 } else {
                   _startDraw(details.localPosition);
                 }
+
+                final position = details.localPosition;
+                bool tappedOnText = false;
+
+                for (int i = 0; i < textObjects.length; i++) {
+                  final textObject = textObjects[i];
+                  final textSpan = TextSpan(
+                    text: textObject.text,
+                    style: const TextStyle(
+                      color: Colors.black,
+                      fontSize: 20,
+                    ),
+                  );
+                  final textPainter = TextPainter(
+                    text: textSpan,
+                    textDirection: ui.TextDirection.ltr,
+                  );
+                  textPainter.layout();
+
+                  final rect = Rect.fromLTWH(
+                    textObject.x,
+                    textObject.y,
+                    textPainter.width,
+                    textPainter.height,
+                  );
+
+                  if (rect.contains(position)) {
+                    setState(() {
+                      currentTextIndex = i;
+                      textController.text = textObject.text;
+                      textFocusNode.requestFocus();
+                      isTextFieldVisible = true;
+                      _isTextDragging = true;
+                      _draggedTextIndex = i;
+                      _initialDragOffset = position;
+                    });
+                    tappedOnText = true;
+                    break;
+                  }
+                }
+
+                if (!_isTextDragging && _currentTool != Tool.select) {
+                  // Existing drawing start logic
+                  _startDraw(details.localPosition);
+                }
+
+                for (int i = _actions.length - 1; i >= 0; i--) {
+                  if (_isPositionInAction(position, _actions[i])) {
+                    setState(() {
+                      _selectedActionIndex = i;
+                      _isDragging = true;
+                      _dragOffset = position;
+                      _currentRotation = _actions[i].rotation; // sync slider
+                    });
+                    return;
+                  }
+                }
               },
               onPanUpdate: (details) {
+                _onPanUpdate;
+
                 if (_currentTool == Tool.select &&
                     _selectedActionIndex != null) {
                   _moveSelectedObject(details.localPosition);
                 } else {
                   _updateDraw(details.localPosition);
                 }
+
+                final position = details.localPosition;
+                if (_isTextDragging && _draggedTextIndex != null) {
+                  final delta = position - _initialDragOffset;
+                  setState(() {
+                    final textObject = textObjects[_draggedTextIndex!];
+                    textObject.x += delta.dx;
+                    textObject.y += delta.dy;
+                    _initialDragOffset = position;
+                  });
+                } else if (_currentTool == Tool.select &&
+                    _selectedActionIndex != null) {
+                  _moveSelectedObject(position);
+                } else {
+                  _updateDraw(position);
+                }
               },
               onPanEnd: (_) {
+                _onPanEnd;
+
                 if (_currentTool != Tool.select) {
+                  _endDraw();
+                } else {
+                  _endDrag();
+                }
+
+                if (_isTextDragging) {
+                  setState(() {
+                    _isTextDragging = false;
+                    _draggedTextIndex = null;
+                  });
+                } else if (_currentTool != Tool.select) {
                   _endDraw();
                 } else {
                   _endDrag();
@@ -478,6 +688,8 @@ class _DrawingPadState extends State<DrawingPad> {
                             _backgroundImage,
                             _scale,
                             _currentTextStyle,
+                            _currentRotation,
+                            _selectedActionIndex,
                           ),
                         ),
                         CustomPaint(
@@ -654,7 +866,13 @@ class _DrawingPadState extends State<DrawingPad> {
           spacing: 10,
           children: Colors.primaries
               .map((color) => GestureDetector(
-                    onTap: () => _setColor(color),
+                    onTap: () {
+                      if (_selectedActionIndex != null) {
+                        setState(() {
+                          _actions[_selectedActionIndex!].color = color;
+                        });
+                      }
+                    },
                     child: Container(
                       width: 25,
                       height: 25,
@@ -684,6 +902,44 @@ class _DrawingPadState extends State<DrawingPad> {
           label: _strokeWidth.toString(),
           onChanged: _setStroke,
         ),
+
+        if (_selectedActionIndex != null) ...[
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                    'Rotation (${(_currentRotation * 180 / pi).toStringAsFixed(0)}°)'),
+                Slider(
+                  activeColor: Colors.blueAccent,
+                  value: _currentRotation,
+                  min: 0,
+                  max: 2 * pi,
+                  divisions: 360,
+                  label: (_currentRotation * 180 / pi).toStringAsFixed(0) + '°',
+                  onChanged: (value) {
+                    setState(() {
+                      _currentRotation = value;
+                      _actions[_selectedActionIndex!].rotation = value;
+                    });
+                  },
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    setState(() {
+                      _currentRotation = 0.0;
+                      if (_selectedActionIndex != null) {
+                        _actions[_selectedActionIndex!].rotation = 0.0;
+                      }
+                    });
+                  },
+                  child: Text('Reset Rotation'),
+                ),
+              ],
+            ),
+          ),
+        ],
 
         if (_currentTool == Tool.polygon) ...[
           const Divider(),
